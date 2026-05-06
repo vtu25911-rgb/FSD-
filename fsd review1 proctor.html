@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Exam Proctor v2.0</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
+    <style>
+        body { font-family: Arial; text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; margin: 0; }
+        #container { max-width: 900px; margin: auto; padding: 20px; }
+        video { border: 3px solid #fff; border-radius: 15px; background: black; }
+        #quiz { background: rgba(255,255,255,0.1); border-radius: 15px; padding: 20px; margin: 20px 0; backdrop-filter: blur(10px); }
+        .question { margin: 15px 0; }
+        label { display: block; margin: 10px 0; cursor: pointer; }
+        #log { background: rgba(0,0,0,0.3); border-radius: 15px; padding: 20px; margin: 20px 0; height: 250px; overflow-y: scroll; text-align: left; font-size: 14px; }
+        button { background: #4CAF50; color: white; padding: 15px 35px; font-size: 18px; border: none; border-radius: 25px; cursor: pointer; margin: 10px; transition: all 0.3s; }
+        button:hover { background: #45a049; transform: scale(1.05); }
+        button:disabled { background: #666; cursor: not-allowed; transform: none; }
+        .alert { color: #ff4444 !important; font-weight: bold; animation: pulse 1s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+        .status { font-size: 28px; margin: 20px; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); }
+        .score { font-size: 24px; color: gold; }
+        #score { display: none; }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <h1>🎓 AI Smart Exam Proctor v2.0</h1>
+        <p>Webcam-monitored quiz. Flags: gaze off, multiple faces, phone (hand gesture), tab switch, no fullscreen.</p>
+        <video id="video" width="640" height="480" autoplay playsinline style="display: none;"></video>
+        <canvas id="canvas" width="640" height="480" style="display: none;"></canvas>
+        <div class="status" id="status">Click Start → Enable Fullscreen & Webcam</div>
+        <br>
+        <button onclick="startExam()">🚀 Start Secure Exam</button>
+        <button onclick="endExam()" style="background: #f44336;" id="endBtn" disabled>⏹️ End & Score</button>
+        <br><br>
+        <div id="quiz" style="display: none;">
+            <div id="question-container"></div>
+            <button onclick="submitAnswer()" id="nextBtn" disabled>Next Question</button>
+        </div>
+        <div id="score"></div>
+        <div id="log">📋 Proctor & Activity Log:<br></div>
+        <button onclick="downloadReport()">📥 Download Full Report</button>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const logEl = document.getElementById('log');
+        const statusEl = document.getElementById('status');
+        const quizEl = document.getElementById('quiz');
+        const qContainer = document.getElementById('question-container');
+        const nextBtn = document.getElementById('nextBtn');
+        const scoreEl = document.getElementById('score');
+
+        let camera, faceMesh, hands, isExamOn = false, currentQ = 0, score = 0;
+        const logs = [];
+        const questions = [
+            { q: "What is 2+2?", options: ["3", "4", "5"], ans: 1 },
+            { q: "Capital of India?", options: ["Delhi", "Mumbai", "Tiruppur"], ans: 0 },
+            // Add 8 more for full 10...
+            { q: "Python founder?", options: ["Guido", "Elon", "Sundar"], ans: 0 },
+            { q: "AI subset for images?", options: ["CV", "NLP", "RL"], ans: 0 },
+            { q: "HTML tag for image?", options: ["<img>", "<pic>", "<view>"], ans: 0 },
+            { q: "Largest planet?", options: ["Earth", "Jupiter", "Saturn"], ans: 1 },
+            { q: "2^3?", options: ["6", "8", "9"], ans: 1 },
+            { q: "Tamil Nadu city?", options: ["Tiruppur", "Texas", "Tokyo"], ans: 0 },
+            { q: "JS for loops?", options: ["for", "loop", "while"], ans: 0 },
+            { q: "MediaPipe for?", options: ["CV", "Audio", "Text"], ans: 0 }
+        ];
+
+        function addLog(msg, isAlert = false) {
+            const timestamp = new Date().toLocaleTimeString();
+            logs.push(`${timestamp}: ${msg}`);
+            const div = document.createElement('div');
+            div.className = isAlert ? 'alert' : '';
+            div.textContent = `${timestamp} - ${msg}`;
+            logEl.appendChild(div);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function showQuestion() {
+            if (currentQ >= questions.length) {
+                endExam();
+                return;
+            }
+            const q = questions[currentQ];
+            qContainer.innerHTML = `
+                <div class="question">
+                    <h3>Q${currentQ + 1}: ${q.q}</h3>
+                    ${q.options.map((opt, i) => `<label><input type="radio" name="ans" value="${i}"> ${opt}</label>`).join('')}
+                </div>
+            `;
+            nextBtn.disabled = true;
+        }
+
+        function submitAnswer() {
+            const selected = document.querySelector('input[name="ans"]:checked');
+            if (selected) {
+                if (parseInt(selected.value) === questions[currentQ].ans) score++;
+                currentQ++;
+                showQuestion();
+            }
+        }
+
+        // Event listeners
+        nextBtn.onclick = submitAnswer;
+        document.addEventListener('visibilitychange', () => {
+            if (isExamOn && document.hidden) addLog('🚨 CRITICAL: Tab switched/minimized!', true);
+        });
+        document.addEventListener('fullscreenchange', () => {
+            if (isExamOn && !document.fullscreenElement) addLog('⚠️ WARNING: Exit fullscreen detected!', true);
+        });
+
+        function startExam() {
+            canvas.style.display = 'block';
+            video.style.display = 'block';
+            document.body.requestFullscreen();
+            navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+                video.srcObject = stream;
+                camera = new Camera(video, { onFrame: () => {
+                    ctx.save();
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    ctx.restore();
+                    if (faceMesh) faceMesh.send({ image: video });
+                    if (hands) hands.send({ image: video });
+                }});
+                faceMesh = new FaceMesh({locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
+                faceMesh.setOptions({ maxNumFaces: 2, refineLandmarks: true });
+                faceMesh.onResults(onFaceResults);
+
+                hands = new Hands({locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+                hands.setOptions({ maxNumHands: 2 });
+                hands.onResults(onHandResults);
+
+                camera.start();
+                isExamOn = true;
+                statusEl.textContent = `Exam Active - Q1/${questions.length} | Score: ${score}`;
+                statusEl.style.color = '#FFD700';
+                quizEl.style.display = 'block';
+                document.getElementById('endBtn').disabled = false;
+                showQuestion();
+                addLog('✅ Exam started. Fullscreen, gaze, hands, tabs monitored.');
+            }).catch(err => alert('Webcam access denied!'));
+        }
+
+        function onFaceResults(results) {
+            if (results.multiFaceLandmarks?.length > 1) addLog('🚨 Multiple faces!', true);
+            if (results.multiFaceLandmarks) {
+                const lm = results.multiFaceLandmarks[0][33]; // Left eye approx
+                const gazeOffset = Math.abs(lm.x - 0.5);
+                if (gazeOffset > 0.15) addLog(`👀 Gaze deviation: ${(gazeOffset*100).toFixed(0)}%`, true);
+            }
+        }
+
+        function onHandResults(results) {
+            if (results.multiHandLandmarks?.length > 1) addLog('📱 Possible phone use (multiple hands)!', true);
+        }
+
+        function endExam() {
+            if (camera) camera.stop();
+            isExamOn = false;
+            const finalScore = Math.round((score / questions.length) * 100);
+            scoreEl.innerHTML = `<div class="score">Final Score: ${score}/${questions.length} (${finalScore}%)</div>`;
+            scoreEl.style.display = 'block';
+            statusEl.textContent = `Exam Complete | Score: ${finalScore}%`;
+            statusEl.style.color = finalScore > 80 ? 'green' : 'orange';
+            document.getElementById('endBtn').disabled = true;
+            addLog(`🏆 Exam ended. Score: ${score}/${questions.length}`);
+            if (document.fullscreenElement) document.exitFullscreen();
+        }
+
+        function downloadReport() {
+            const report = `Proctor Report\n${logs.join('\n')}\n\nQuiz Score: ${score}/${questions.length}`;
+            const blob = new Blob([report], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = `proctor_report_${new Date().toISOString().slice(0,10)}.txt`; a.click();
+        }
+    </script>
+</body>
+</html>
