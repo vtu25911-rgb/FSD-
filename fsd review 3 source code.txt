@@ -1,0 +1,447 @@
+html 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Proctora - Exam Monitoring System</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Views will be injected or toggled here -->
+        
+        <!-- Login View -->
+        <div id="login-view" class="view active">
+            <div class="login-card glass-panel">
+                <h1>Proctora</h1>
+                <p>Exam Monitoring System</p>
+                <form id="login-form">
+                    <div class="input-group">
+                        <label for="username">Username</label>
+                        <input type="text" id="username" required placeholder="admin or student1">
+                    </div>
+                    <div class="input-group">
+                        <label for="password">Password</label>
+                        <input type="password" id="password" required placeholder="password">
+                    </div>
+                    <button type="submit" class="btn primary">Login</button>
+                    <div id="login-error" class="error-msg hidden">Invalid credentials</div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Admin View -->
+        <div id="admin-view" class="view hidden">
+            <nav class="navbar glass-panel">
+                <div class="logo">Proctora Admin</div>
+                <button id="admin-logout" class="btn secondary">Logout</button>
+            </nav>
+            <main class="dashboard">
+                <div class="glass-panel">
+                    <h2>Create New Exam</h2>
+                    <form id="create-exam-form">
+                        <div class="input-group">
+                            <label for="exam-title">Exam Title</label>
+                            <input type="text" id="exam-title" required placeholder="e.g., Midterm JavaScript">
+                        </div>
+                        <div id="questions-container">
+                            <!-- Questions will be added here dynamically -->
+                        </div>
+                        <button type="button" id="add-question-btn" class="btn secondary">+ Add Question</button>
+                        <button type="submit" id="save-exam-btn" class="btn primary mt-2">Save Exam</button>
+                    </form>
+                </div>
+                
+                <div class="glass-panel mt-2">
+                    <h2>Existing Exams</h2>
+                    <ul id="admin-exam-list" class="item-list"></ul>
+                </div>
+            </main>
+        </div>
+
+        <!-- Student Dashboard View -->
+        <div id="student-view" class="view hidden">
+            <nav class="navbar glass-panel">
+                <div class="logo">Proctora Student</div>
+                <span id="student-name-display"></span>
+                <button id="student-logout" class="btn secondary">Logout</button>
+            </nav>
+            <main class="dashboard">
+                <div class="glass-panel">
+                    <h2>Available Exams</h2>
+                    <ul id="student-exam-list" class="item-list"></ul>
+                </div>
+                <div class="glass-panel mt-2">
+                    <h2>My Results</h2>
+                    <ul id="student-results-list" class="item-list"></ul>
+                </div>
+            </main>
+        </div>
+
+        <!-- Exam Taking View -->
+        <div id="exam-taking-view" class="view hidden fullscreen-view">
+            <div class="exam-header glass-panel">
+                <h2 id="exam-taking-title">Exam Title</h2>
+                <div class="warning-banner hidden" id="tab-warning">WARNING: Do not switch tabs. Exam will be terminated!</div>
+            </div>
+            <main class="exam-container glass-panel">
+                <form id="take-exam-form">
+                    <div id="exam-questions-container"></div>
+                    <button type="submit" class="btn primary large mt-2">Submit Exam</button>
+                </form>
+            </main>
+            <!-- Overlay to block interaction on termination -->
+            <div id="termination-overlay" class="overlay hidden">
+                <div class="overlay-content glass-panel">
+                    <h2>Exam Terminated</h2>
+                    <p>You switched tabs during the exam. This is a violation of the rules. Your exam has been automatically submitted with current answers.</p>
+                    <button id="return-dashboard-btn" class="btn primary">Return to Dashboard</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/db.js"></script>
+    <script src="js/admin.js"></script>
+    <script src="js/student.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
+
+css:
+:root {
+    --bg-color: #0f172a;
+    --text-color: #f8fafc;
+    --text-muted: #94a3b8;
+    --primary-color: #3b82f6;
+    --primary-hover: #2563eb;
+    --danger-color: #ef4444;
+    --success-color: #10b981;
+    --glass-bg: rgba(30, 41, 59, 0.7);
+    --glass-border: rgba(255, 255, 255, 0.1);
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Inter', sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    min-height: 100vh;
+    overflow-x: hidden;
+    background-image: radial-gradient(circle at top right, #1e293b, transparent 40%),
+                      radial-gradient(circle at bottom left, #0f172a, transparent 40%);
+    background-attachment: fixed;
+}
+
+.view {
+    display: none;
+    min-height: 100vh;
+    padding: 2rem;
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+js:
+
+// admin.js
+// Admin dashboard and exam creation logic
+
+const Admin = {
+    questionCount: 0,
+
+    init: function() {
+        this.bindEvents();
+        this.renderExamsList();
+        // Clear previous form state
+        document.getElementById('questions-container').innerHTML = '';
+        this.questionCount = 0;
+        this.addQuestionBlock(); // Add one default question
+    },
+
+    bindEvents: function() {
+        const addBtn = document.getElementById('add-question-btn');
+        const form = document.getElementById('create-exam-form');
+        
+        // Remove existing listeners to prevent duplicates if init is called multiple times
+        const newAddBtn = addBtn.cloneNode(true);
+        addBtn.parentNode.replaceChild(newAddBtn, addBtn);
+        newAddBtn.addEventListener('click', this.addQuestionBlock.bind(this));
+
+        const newForm = form.cloneNode(true);
+        form.parentNode.replaceChild(newForm, form);
+        newForm.addEventListener('submit', this.handleSaveExam.bind(this));
+    },
+
+    addQuestionBlock: function() {
+        this.questionCount++;
+        const qId = this.questionCount;
+        const container = document.getElementById('questions-container');
+        
+        const block = document.createElement('div');
+        block.className = 'question-block';
+        block.id = `qblock-${qId}`;
+        
+        block.innerHTML = `
+            <button type="button" class="remove-question-btn" onclick="document.getElementById('qblock-${qId}').remove()">&times;</button>
+            <div class="input-group">
+                <label>Question ${qId}</label>
+                <input type="text" class="q-text" required placeholder="Enter question text">
+            </div>
+            <div class="options-grid">
+                <div class="input-group">
+                    <label>Option A</label>
+                    <input type="text" class="q-opt-a" required placeholder="Option A">
+                </div>
+                <div class="input-group">
+                    <label>Option B</label>
+                    <input type="text" class="q-opt-b" required placeholder="Option B">
+                </div>
+                <div class="input-group">
+                    <label>Option C</label>
+                    <input type="text" class="q-opt-c" required placeholder="Option C">
+                </div>
+                <div class="input-group">
+                    <label>Option D</label>
+                    <input type="text" class="q-opt-d" required placeholder="Option D">
+                </div>
+            </div>
+            <div class="input-group">
+                <label>Correct Answer</label>
+                <select class="q-correct" required>
+                    <option value="A">Option A</option>
+                    <option value="B">Option B</option>
+                    <option value="C">Option C</option>
+                    <option value="D">Option D</option>
+                </select>
+            </div>
+        `;
+        
+        container.appendChild(block);
+    },
+
+    handleSaveExam: function(e) {
+        e.preventDefault();
+        
+        const title = document.getElementById('exam-title').value.trim();
+        const questionBlocks = document.querySelectorAll('.question-block');
+        
+        if (questionBlocks.length === 0) {
+            alert('Please add at least one question.');
+            return;
+        }
+
+        const questions = Array.from(questionBlocks).map(block => {
+            return {
+                text: block.querySelector('.q-text').value.trim(),
+                options: {
+                    A: block.querySelector('.q-opt-a').value.trim(),
+                    B: block.querySelector('.q-opt-b').value.trim(),
+                    C: block.querySelector('.q-opt-c').value.trim(),
+                    D: block.querySelector('.q-opt-d').value.trim()
+                },
+                correct: block.querySelector('.q-correct').value
+            };
+        });
+
+        const exam = {
+            title: title,
+            questions: questions,
+            createdAt: new Date().toISOString()
+        };
+
+        DB.saveExam(exam);
+        
+        // Reset form
+        document.getElementById('create-exam-form').reset();
+        document.getElementById('questions-container').innerHTML = '';
+        this.questionCount = 0;
+        this.addQuestionBlock();
+        
+        alert('Exam saved successfully!');
+        this.renderExamsList();
+    },
+
+    renderExamsList: function() {
+        const exams = DB.getExams();
+        const list = document.getElementById('admin-exam-list');
+        list.innerHTML = '';
+
+        if (exams.length === 0) {
+            list.innerHTML = '<li>No exams created yet.</li>';
+            return;
+        }
+
+        exams.forEach(exam => {
+            const li = document.createElement('li');
+            li.innerHTML = `
+                <div>
+                    <strong>${exam.title}</strong>
+                    <div style="font-size: 0.85em; color: var(--text-muted);">${exam.questions.length} questions</div>
+                </div>
+                <div>
+                    <span style="font-size: 0.85em; color: var(--text-muted);">${new Date(exam.createdAt).toLocaleDateString()}</span>
+                </div>
+            `;
+            list.appendChild(li);
+        });
+    }
+};
+
+
+// db.js
+// Mock Database using LocalStorage
+
+const DB_KEYS = {
+    USERS: 'proctora_users',
+    EXAMS: 'proctora_exams',
+    RESULTS: 'proctora_results'
+};
+
+const DB = {
+    init: function() {
+        if (!localStorage.getItem(DB_KEYS.USERS)) {
+            const initialUsers = [
+                { id: 'admin', role: 'admin', password: 'password' },
+                { id: 'student1', role: 'student', password: 'password', name: 'Student One' },
+                { id: 'student2', role: 'student', password: 'password', name: 'Student Two' },
+                { id: 'student3', role: 'student', password: 'password', name: 'Student Three' },
+                { id: 'student4', role: 'student', password: 'password', name: 'Student Four' },
+                { id: 'student5', role: 'student', password: 'password', name: 'Student Five' }
+            ];
+            localStorage.setItem(DB_KEYS.USERS, JSON.stringify(initialUsers));
+        }
+
+        if (!localStorage.getItem(DB_KEYS.EXAMS)) {
+            localStorage.setItem(DB_KEYS.EXAMS, JSON.stringify([]));
+        }
+
+        if (!localStorage.getItem(DB_KEYS.RESULTS)) {
+            localStorage.setItem(DB_KEYS.RESULTS, JSON.stringify([]));
+        }
+    },
+
+    getUsers: function() {
+        return JSON.parse(localStorage.getItem(DB_KEYS.USERS));
+    },
+
+    authenticate: function(username, password) {
+        const users = this.getUsers();
+        return users.find(u => u.id === username && u.password === password) || null;
+    },
+
+    getExams: function() {
+        return JSON.parse(localStorage.getItem(DB_KEYS.EXAMS));
+    },
+
+    saveExam: function(exam) {
+        const exams = this.getExams();
+        exam.id = 'exam_' + Date.now();
+        exams.push(exam);
+        localStorage.setItem(DB_KEYS.EXAMS, JSON.stringify(exams));
+    },
+
+    getResults: function(studentId = null) {
+        const results = JSON.parse(localStorage.getItem(DB_KEYS.RESULTS));
+        if (studentId) {
+            return results.filter(r => r.studentId === studentId);
+        }
+        return results;
+    },
+
+    saveResult: function(result) {
+        const results = this.getResults();
+        results.push(result);
+        localStorage.setItem(DB_KEYS.RESULTS, JSON.stringify(results));
+    }
+};
+
+// Initialize DB on script load
+DB.init();
+
+
+// main.js
+// Routing and authentication logic
+
+let currentUser = null;
+
+const App = {
+    views: ['login-view', 'admin-view', 'student-view', 'exam-taking-view'],
+    
+    init: function() {
+        this.bindEvents();
+        this.checkSession();
+    },
+
+    bindEvents: function() {
+        document.getElementById('login-form').addEventListener('submit', this.handleLogin.bind(this));
+        document.getElementById('admin-logout').addEventListener('click', this.handleLogout.bind(this));
+        document.getElementById('student-logout').addEventListener('click', this.handleLogout.bind(this));
+    },
+
+    switchView: function(viewId) {
+        this.views.forEach(v => {
+            document.getElementById(v).classList.add('hidden');
+            document.getElementById(v).classList.remove('active');
+        });
+        document.getElementById(viewId).classList.remove('hidden');
+        document.getElementById(viewId).classList.add('active');
+    },
+
+    handleLogin: function(e) {
+        e.preventDefault();
+        const usernameInput = document.getElementById('username').value.trim();
+        const passwordInput = document.getElementById('password').value;
+        const errorMsg = document.getElementById('login-error');
+
+        const user = DB.authenticate(usernameInput, passwordInput);
+
+        if (user) {
+            errorMsg.classList.add('hidden');
+            this.loginUser(user);
+        } else {
+            errorMsg.classList.remove('hidden');
+        }
+    },
+
+    loginUser: function(user) {
+        currentUser = user;
+        sessionStorage.setItem('currentUser', JSON.stringify(user));
+        
+        if (user.role === 'admin') {
+            this.switchView('admin-view');
+            Admin.init();
+        } else if (user.role === 'student') {
+            this.switchView('student-view');
+            Student.init();
+        }
+    },
+
+    handleLogout: function() {
+        currentUser = null;
+        sessionStorage.removeItem('currentUser');
+        document.getElementById('login-form').reset();
+        this.switchView('login-view');
+    },
+
+    checkSession: function() {
+        const storedUser = sessionStorage.getItem('currentUser');
+        if (storedUser) {
+            this.loginUser(JSON.parse(storedUser));
+        } else {
+            this.switchView('login-view');
+        }
+    }
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+    App.init();
+});
+
+
